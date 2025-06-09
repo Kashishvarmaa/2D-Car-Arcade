@@ -11,9 +11,16 @@
 #include <string>
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
+#include <cstdlib>  
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_mixer.h>
+
 GLuint dustbinTexture;
 GLuint playerCarTexture;
 GLuint obstacleCarTexture;
+GLuint texTree, texBush, texCycle, texDog, texHuman, texHouse, texFlowers;
+GLuint texBushObstacle, texGutter, texBlocker, texCone;
+
 
 // Window dimensions (wider and shorter)
 int winWidth = 700, winHeight = 500;
@@ -27,6 +34,7 @@ GLuint carTexture;
 int score = 0;
 bool collide = false;
 int lives = 3;
+int highScore = 0;
 
 // For player selection
 std::vector<std::string> players;      // list of player names
@@ -46,8 +54,31 @@ bool obstaclePassed[4];  // track if obstacle has been passed
 int movd = 0;
 char buffer[10];
 
-enum ObstacleType { OBSTACLE_CAR, OBSTACLE_BUSH, OBSTACLE_GUTTER, OBSTACLE_ROCK };
-ObstacleType oType[4];
+
+
+Mix_Music* carEngineMusic = nullptr;
+bool engineSoundPlaying = false;
+unsigned int lastMovementTime = 0;
+const unsigned int ENGINE_SOUND_TIMEOUT = 2000;
+
+
+enum ObstacleType {
+    OBSTACLE_CAR,
+    OBSTACLE_BUSH,
+    OBSTACLE_GUTTER,
+    OBSTACLE_ROCK,
+    OBSTACLE_BLOCKER,
+    OBSTACLE_CONE
+};
+
+
+// Define the structure for the obstacles with position
+struct Obstacle {
+    float x, y;        // Position of the obstacle
+    ObstacleType type; // Type of the obstacle (car, bush, etc.)
+};
+
+ObstacleType oType[4];  // Declare this after the enum
 
 struct BushBlob {
     float offsetX[5];
@@ -264,6 +295,35 @@ void drawHeart(float x, float y, float size, bool filled) {
     glEnd();
 }
 
+void drawImage(GLuint texture, float x, float y, float width, float height) {
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glColor3f(1, 1, 1); // make sure it's not tinted!
+
+    glBegin(GL_QUADS);
+        glTexCoord2f(0, 0); glVertex2f(x, y);
+        glTexCoord2f(1, 0); glVertex2f(x + width, y);
+        glTexCoord2f(1, 1); glVertex2f(x + width, y + height);
+        glTexCoord2f(0, 1); glVertex2f(x, y + height);
+    glEnd();
+
+    glDisable(GL_TEXTURE_2D);
+}
+
+void drawFlippedImage(GLuint texture, float x, float y, float width, float height) {
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, texture);
+
+    glBegin(GL_QUADS);
+        glTexCoord2f(1, 0); glVertex2f(x, y);
+        glTexCoord2f(0, 0); glVertex2f(x + width, y);
+        glTexCoord2f(0, 1); glVertex2f(x + width, y + height);
+        glTexCoord2f(1, 1); glVertex2f(x, y + height);
+    glEnd();
+
+    glDisable(GL_TEXTURE_2D);
+}
+
 void drawGame() {
     // Compute a speed factor based on window height relative to our base height.
     float speedFactor = winHeight / static_cast<float>(baseHeight);
@@ -272,17 +332,27 @@ void drawGame() {
     const int roadWidth = 300;
     int roadLeft = (winWidth - roadWidth) / 2;
     int roadRight = roadLeft + roadWidth;
-    
-    // Draw the green background.
-    glColor3f(0, 1, 0);
+
+
+    // Draw left red strip
+    glColor3f(1.0f, 0.0f, 0.0f); // Red color
     glBegin(GL_QUADS);
-        glVertex2f(0, 0);
-        glVertex2f(0, winHeight);
-        glVertex2f(winWidth, winHeight);
-        glVertex2f(winWidth, 0);
+        glVertex2f(roadLeft - 10, 0);                 // 10px wide strip on the left
+        glVertex2f(roadLeft, 0);
+        glVertex2f(roadLeft, winHeight);
+        glVertex2f(roadLeft - 10, winHeight);
+    glEnd();
+
+    // Draw right red strip
+    glColor3f(1.0f, 0.0f, 0.0f); // Red color
+    glBegin(GL_QUADS);
+        glVertex2f(roadRight, 0);
+        glVertex2f(roadRight + 10, 0);                // 10px wide strip on the right
+        glVertex2f(roadRight + 10, winHeight);
+        glVertex2f(roadRight, winHeight);
     glEnd();
     
-    // Draw the road (centered).
+    // --- Draw the road (centered) ---
     glColor3f(0.1, 0.1, 0.1);
     glBegin(GL_QUADS);
         glVertex2f(roadLeft, 0);
@@ -290,6 +360,32 @@ void drawGame() {
         glVertex2f(roadRight, winHeight);
         glVertex2f(roadRight, 0);
     glEnd();
+
+    // --- Left and Right Bushes alongside road (static) ---
+    int bushWidth = 40, bushHeight = 60;
+    int bushGap = 20; 
+    for (int y = 0; y < winHeight; y += (bushHeight + bushGap)) {
+        drawImage(texBush, roadLeft - bushWidth, y, bushWidth, bushHeight);
+    }
+    for (int y = 0; y < winHeight; y += (bushHeight + bushGap)) {
+        drawFlippedImage(texBush, roadRight, y, bushWidth, bushHeight);
+    }
+
+    // --- Draw Left Side Elements ---
+    drawImage(texTree, 30, 100, 50, 80);
+    drawImage(texBush, 50, 220, 40, 30);
+    drawImage(texCycle, 40, 350, 60, 40);
+    drawImage(texHuman, 55, 480, 40, 60);
+    drawImage(texFlowers, 20, 600, 50, 40);
+
+    // --- Draw Right Side Elements ---
+    int rightX = winWidth - 100; // adjust to fit nicely on the right
+    drawImage(texHouse, rightX, 100, 80, 80);
+    drawImage(texDog, rightX + 10, 250, 50, 40);
+    drawImage(texBush, rightX - 20, 400, 40, 30);
+    drawImage(texFlowers, rightX, 530, 50, 40);
+
+
     
     // Draw lane markers.
     glColor3f(1, 1, 1);
@@ -327,8 +423,8 @@ void drawGame() {
     
     glDisable(GL_TEXTURE_2D);
 
-    
-    // Draw obstacles.
+
+// OBSTACLES
     for (int i = 0; i < 4; i++) {
         int x = ovehicleX[i];
         int y = ovehicleY[i];
@@ -336,64 +432,31 @@ void drawGame() {
             case OBSTACLE_CAR:
                 glColor3f(1.0, 0.0, 0.0);
                 glBegin(GL_QUADS);
-                    glVertex2f(x - 20, y - 25);
-                    glVertex2f(x + 20, y - 25);
-                    glVertex2f(x + 20, y + 25);
-                    glVertex2f(x - 20, y + 25);
-                glEnd();
-                glColor3f(0.1, 0.1, 0.1);
-                glBegin(GL_QUADS);
-                    glVertex2f(x - 15, y - 10);
-                    glVertex2f(x + 15, y - 10);
-                    glVertex2f(x + 15, y + 10);
-                    glVertex2f(x - 15, y + 10);
+                // Draw car shape or call drawImage(obstacleCarTexture, ...)
                 glEnd();
                 break;
+        
             case OBSTACLE_BUSH:
-                for (int b = 0; b < 5; b++) {
-                    float ox = bushBlobs[i].offsetX[b];
-                    float oy = bushBlobs[i].offsetY[b];
-                    float r = bushBlobs[i].radius[b];
-                    float g = bushBlobs[i].green[b];
-                    glColor3f(0.0f, g, 0.0f);
-                    glBegin(GL_POLYGON);
-                    for (int j = 0; j < 20; ++j) {
-                        float theta = j * 2.0f * 3.14159f / 20;
-                        float dx = cos(theta) * r;
-                        float dy = sin(theta) * r;
-                        glVertex2f(x + ox + dx, y + oy + dy);
-                    }
-                    glEnd();
-                }
+                drawImage(texBushObstacle, x - 25, y - 25, 50, 50);
                 break;
+        
             case OBSTACLE_GUTTER:
-                glColor3f(0.4f, 0.4f, 0.4f);
-                glBegin(GL_QUADS);
-                    glVertex2f(x - 20, y - 25);
-                    glVertex2f(x + 20, y - 25);
-                    glVertex2f(x + 20, y + 25);
-                    glVertex2f(x - 20, y + 25);
-                glEnd();
-                glColor3f(1.0f, 1.0f, 0.0f);
-                for (int l = -20; l <= 20; l += 15) {
-                    glBegin(GL_LINES);
-                        glVertex2f(x + l - 10, y - 25);
-                        glVertex2f(x + l + 10, y + 25);
-                    glEnd();
-                }
+                drawImage(texGutter, x - 30, y - 20, 60, 40);
                 break;
+        
             case OBSTACLE_ROCK:
-                glColor3f(0.2f, 0.2f, 0.2f);
-                glBegin(GL_POLYGON);
-                    glVertex2f(x - 15, y - 10);
-                    glVertex2f(x - 5, y - 20);
-                    glVertex2f(x + 10, y - 10);
-                    glVertex2f(x + 20, y);
-                    glVertex2f(x + 5, y + 15);
-                    glVertex2f(x - 10, y + 10);
-                glEnd();
+                drawImage(texBlocker, x - 25, y - 25, 50, 50);
                 break;
-        }
+        
+            case OBSTACLE_CONE:
+                drawImage(texCone, x - 15, y - 20, 30, 40);
+                break;
+        
+            case OBSTACLE_BLOCKER:
+                drawImage(texBlocker, x - 25, y - 25, 50, 50);
+                break;
+        }          
+    
         // Collision detection.
         if (!collide && ovehicleX[i] == vehicleX &&
             ovehicleY[i] > vehicleY - 40 && ovehicleY[i] < vehicleY + 40) {
@@ -411,13 +474,14 @@ void drawGame() {
             score++;
             obstaclePassed[i] = true;
         }
+
         // Reset obstacles when they leave the screen (scale the threshold too).
         if (ovehicleY[i] < -static_cast<int>(50 * speedFactor)) {
             int newX = lanes[rand() % 3];
             int newY = winHeight;
-            bool valid = true;
+            bool valid = true; 
             for (int j = 0; j < 4; j++) {
-                if (j != i && ovehicleX[j] != newX && abs(ovehicleY[j] - newY) < 150)
+                if (j != i && ovehicleX[j] != newX && abs(ovehicleY[j] - newY) < 200)
                 {
                     valid = false;
                     break;
@@ -551,9 +615,18 @@ void display() {
         drawCenteredText("GAME OVER", winHeight / 2 + 40, boldFont, 1, 0, 0);
         char scoreStr[32];
         sprintf(scoreStr, "SCORE:  %05d", score);
+        if (score >= highScore) {
+            highScore = score;
+            drawCenteredText("NEW HIGH SCORE!", winHeight / 2 + 10, boldFont, 1, 1, 0);
+        }
         drawCenteredText(scoreStr, winHeight / 2 - 10, boldFont, 1, 1, 1);
         drawFancyButtonCentered(winHeight / 2 - 60, 150, 40, "RESTART");
         drawFancyButtonCentered(winHeight / 2 - 110, 150, 40, "CHANGE PLAYER");
+    }
+    unsigned int currentTime = glutGet(GLUT_ELAPSED_TIME);
+    if (engineSoundPlaying && (currentTime - lastMovementTime > ENGINE_SOUND_TIMEOUT)) {
+        Mix_HaltMusic();
+        engineSoundPlaying = false;
     }
     glutSwapBuffers();
 }
@@ -654,6 +727,12 @@ void keyboard(unsigned char key, int x, int y) {
 }
 
 void keyPress(int key, int x, int y) {
+    lastMovementTime = glutGet(GLUT_ELAPSED_TIME);
+    if (!engineSoundPlaying && carEngineMusic) {
+        Mix_PlayMusic(carEngineMusic, -1);
+        engineSoundPlaying = true;
+    }
+
     if (gameState != PLAYING)
         return;
     if (key == GLUT_KEY_LEFT && currentLaneIndex > 0)
@@ -710,14 +789,38 @@ void init() {
     
     dustbinTexture = loadTexture("dustbin.png");
     playerCarTexture = loadTexture("car1.png");
-    // obstacleCarTexture = loadTexture("obstacle_car.png");
+    texTree    = loadTexture("tree.png");
+    texBush    = loadTexture("bush copy.png");
+    texCycle   = loadTexture("bicycle.png");
+    texDog     = loadTexture("dog.png");
+    texHuman   = loadTexture("man.png");
+    texHouse   = loadTexture("house.png");
+    texFlowers = loadTexture("flower.png");
+    texBushObstacle = loadTexture("bush.png");         // Image for bush
+    texGutter = loadTexture("pothole.png");             // Image for gutter
+    texBlocker = loadTexture("stop.png");           // Roadblock image
+    texCone = loadTexture("traffic_cone.png");                 // Traffic cone
+
+    // // Optional: Set background clear color if needed
+    // glClearColor(0.0f, 0.0f, 0.0f, 0.0f); // R=0, G=1, B=0, fully opaque // dark green background
+    // // obstacleCarTexture = loadTexture("obstacle_car.png");
     
+}
+
+void cleanup() {
+    Mix_FreeMusic(carEngineMusic);
+    Mix_CloseAudio();
+    SDL_Quit();
 }
 
 int main(int argc, char **argv) {
     // Initialize default players.
     players.push_back("Kashish");
     players.push_back("Ananya");
+
+    SDL_Init(SDL_INIT_AUDIO);
+    Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048);
+    carEngineMusic = Mix_LoadMUS("sound.mp3");
 
     glutInit(&argc, argv);
     glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE);
@@ -732,6 +835,10 @@ int main(int argc, char **argv) {
     glutMouseFunc(mouseClick);
     glutKeyboardFunc(keyboard);
     glutPassiveMotionFunc(mousePassiveMotion);
+
+    // Register the cleanup function to be called on exit
+    atexit(cleanup);
+
     glutMainLoop();
     return 0;
 }
